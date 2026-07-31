@@ -18,12 +18,15 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 TMDB_API_KEY = "6fad3f86b8452ee232deb7977d7dcf58"
 
 # File paths
-TARGET_JSON     = os.getenv("TARGET_JSON", "movies.json")
-PROCESSED_FILE  = "list_of_already_processed_urls.txt"
-ERROR_FILE      = "list_of_facing_error.txt"
+TARGET_JSON    = os.getenv("TARGET_JSON", "movies.json")
+PROCESSED_FILE = "list_of_already_processed_urls.txt"
+ERROR_FILE     = "list_of_facing_error.txt"
 
 # Detect if we are processing a series file
 IS_SERIES = "series" in TARGET_JSON.lower()
+
+# Fallback test URL (overridden at runtime from actual JSON data)
+HTTPS_TEST_URL = "https://ww1.m4uhd.page/"
 
 # ── URL Limit ────────────────────────────────────────────────────
 def parse_url_limit():
@@ -44,7 +47,7 @@ URL_LIMIT = parse_url_limit()
 #  FREE PROXY SCRAPER
 # ══════════════════════════════════════════════════════════════════
 
-def scrape_free_proxies() -> list[str]:
+def scrape_free_proxies() -> list:
     proxies = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
@@ -126,10 +129,13 @@ def scrape_free_proxies() -> list[str]:
 
 # ══════════════════════════════════════════════════════════════════
 #  PROXY POOL
+#  KEY FIX: validated against the REAL target HTTPS host, not
+#  httpbin.org. Only proxies that can actually open a CONNECT
+#  tunnel to ww1.m4uhd.page pass and enter the pool.
 # ══════════════════════════════════════════════════════════════════
 
 class ProxyPool:
-    def __init__(self, proxies: list[str], test_url="http://httpbin.org/ip", timeout=8):
+    def __init__(self, proxies, test_url=HTTPS_TEST_URL, timeout=10):
         self._all      = proxies
         self._live     = deque()
         self._lock     = threading.Lock()
@@ -138,7 +144,7 @@ class ProxyPool:
         self._validate_all()
 
     def _validate_all(self):
-        print(f"\n[*] Validating {len(self._all)} proxies in parallel...")
+        print(f"\n[*] Validating {len(self._all)} proxies against {self._test_url} ...")
         threads = []
         for p in self._all:
             t = threading.Thread(target=self._check, args=(p,))
@@ -146,35 +152,41 @@ class ProxyPool:
             threads.append(t)
             t.start()
         for t in threads:
-            t.join(timeout=self._timeout + 2)
-        print(f"[*] {len(self._live)} / {len(self._all)} proxies passed validation.")
+            t.join(timeout=self._timeout + 3)
+        print(f"[*] {len(self._live)} / {len(self._all)} proxies can tunnel HTTPS to target.")
         if not self._live:
-            raise RuntimeError("[!] No live proxies found. Try again later.")
+            raise RuntimeError("[!] No live proxies found that support HTTPS tunneling to the target.")
 
-    def _check(self, proxy_url: str):
+    def _check(self, proxy_url):
+        """
+        Validates the proxy by making a real GET through it to the actual
+        target host. Catches all tunnel errors: 400, 403, 500, 502, 505,
+        SSL cert failures, and timeouts. Any HTTP response from the site passes.
+        """
         try:
             r = requests.get(
                 self._test_url,
                 proxies={"http": proxy_url, "https": proxy_url},
                 timeout=self._timeout,
-                verify=False
+                verify=False,
+                allow_redirects=True,
             )
-            if r.status_code == 200:
+            if r.status_code < 600:
                 with self._lock:
                     self._live.append(proxy_url)
-                print(f"  [+] Live : {proxy_url}")
+                print(f"  [+] Live [{r.status_code}] : {proxy_url}")
         except Exception:
-            pass  # silently drop dead proxies
+            pass  # any error = tunnel failed, silently drop
 
-    def next(self) -> str:
+    def next(self):
         with self._lock:
             if not self._live:
-                raise RuntimeError("[!] Proxy pool is empty. All proxies are dead.")
+                raise RuntimeError("[!] Proxy pool is empty.")
             proxy = self._live.popleft()
             self._live.append(proxy)
             return proxy
 
-    def remove(self, proxy_url: str):
+    def remove(self, proxy_url):
         with self._lock:
             try:
                 self._live.remove(proxy_url)
@@ -182,20 +194,18 @@ class ProxyPool:
             except ValueError:
                 pass
 
-    def size(self) -> int:
+    def size(self):
         with self._lock:
             return len(self._live)
 
-    def is_empty(self) -> bool:
+    def is_empty(self):
         with self._lock:
             return len(self._live) == 0
 
     def refill(self):
-        """Re-scrape and add newly found live proxies into the pool."""
         print("\n[!] Pool running low — re-scraping fresh proxies...")
         new_proxies = scrape_free_proxies()
-
-        print(f"[*] Validating {len(new_proxies)} new proxies...")
+        print(f"[*] Validating {len(new_proxies)} candidates against {self._test_url} ...")
         found = []
         lock  = threading.Lock()
 
@@ -205,9 +215,10 @@ class ProxyPool:
                     self._test_url,
                     proxies={"http": proxy_url, "https": proxy_url},
                     timeout=self._timeout,
-                    verify=False
+                    verify=False,
+                    allow_redirects=True,
                 )
-                if r.status_code == 200:
+                if r.status_code < 600:
                     with lock:
                         found.append(proxy_url)
             except Exception:
@@ -218,7 +229,7 @@ class ProxyPool:
             t.daemon = True
             t.start()
         for t in threads:
-            t.join(timeout=self._timeout + 2)
+            t.join(timeout=self._timeout + 3)
 
         added = 0
         with self._lock:
@@ -232,7 +243,7 @@ class ProxyPool:
 
 
 # ══════════════════════════════════════════════════════════════════
-#  SESSION + PROXY HELPERS  (same API as original set_new_proxy)
+#  SESSION + PROXY HELPERS
 # ══════════════════════════════════════════════════════════════════
 
 S = requests.Session()
@@ -242,29 +253,21 @@ S.headers.update({
 })
 
 _current_proxy = {"url": None}
-
-# initialised after pool is built (bottom of file)
-pool: ProxyPool = None  # type: ignore
+pool = None
 
 
 def set_new_proxy():
-    """Rotate to the next live proxy — drop-in replacement for original."""
-    global pool
-    # auto-refill when pool gets low
     if pool.size() < 5:
         pool.refill()
-
     _current_proxy["url"] = pool.next()
     S.proxies.update({
         "http":  _current_proxy["url"],
         "https": _current_proxy["url"]
     })
-    safe = _current_proxy["url"]
-    print(f"  [*] Rotating IP... Now using proxy: {safe}")
+    print(f"  [*] Rotating IP... Now using proxy: {_current_proxy['url']}")
 
 
 def report_bad_proxy():
-    """Remove the current bad proxy then rotate — call inside except blocks."""
     if _current_proxy["url"]:
         pool.remove(_current_proxy["url"])
     if pool.is_empty():
@@ -273,7 +276,7 @@ def report_bad_proxy():
 
 
 # ══════════════════════════════════════════════════════════════════
-#  FILE I/O HELPERS  (unchanged)
+#  FILE I/O HELPERS
 # ══════════════════════════════════════════════════════════════════
 
 def init_files():
@@ -294,7 +297,7 @@ def log_error(url, error_msg):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  TMDB LOOKUP  (unchanged)
+#  TMDB LOOKUP
 # ══════════════════════════════════════════════════════════════════
 
 def get_tmdb_id_from_imdb(imdb_id):
@@ -315,7 +318,7 @@ def get_tmdb_id_from_imdb(imdb_id):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  HTML HELPERS  (unchanged)
+#  HTML HELPERS
 # ══════════════════════════════════════════════════════════════════
 
 def base(url):
@@ -342,14 +345,15 @@ def post(url, data, ref):
     r = S.post(
         url, data=data,
         headers={"Referer": ref, "Content-Type": "application/x-www-form-urlencoded"},
-        timeout=15
+        timeout=15,
+        verify=False
     )
     r.raise_for_status()
     return r.text
 
 
 # ══════════════════════════════════════════════════════════════════
-#  EPISODE HELPERS  (unchanged)
+#  EPISODE HELPERS
 # ══════════════════════════════════════════════════════════════════
 
 def fetch_servers_for_episode(root, token, ep_id, target_url, max_retries=3):
@@ -377,7 +381,7 @@ def fetch_servers_for_episode(root, token, ep_id, target_url, max_retries=3):
         except requests.exceptions.RequestException as e:
             print(f"    [!] Episode {ep_id} attempt {attempt + 1}/{max_retries} failed: {e}")
             if attempt < max_retries - 1:
-                report_bad_proxy()          # ← was set_new_proxy()
+                report_bad_proxy()
             else:
                 print(f"    [!] Giving up on episode {ep_id}.")
                 return []
@@ -397,16 +401,16 @@ def get_all_episode_ids(html):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  MAIN EXTRACTION: MOVIES  (unchanged logic)
+#  MAIN EXTRACTION: MOVIES
 # ══════════════════════════════════════════════════════════════════
 
 def extract_movie_servers(target_url, max_retries=3):
     for attempt in range(max_retries):
         try:
             time.sleep(random.uniform(2.5, 5.0))
-            html   = S.get(target_url, timeout=15).text
-            token  = csrf(html)
-            root   = base(target_url)
+            html    = S.get(target_url, timeout=15, verify=False).text
+            token   = csrf(html)
+            root    = base(target_url)
             servers = spans(html)
             embeds  = []
             for label, data in servers:
@@ -419,7 +423,7 @@ def extract_movie_servers(target_url, max_retries=3):
         except requests.exceptions.RequestException as e:
             print(f"  [!] Attempt {attempt + 1}/{max_retries} failed: {e}")
             if attempt < max_retries - 1:
-                report_bad_proxy()          # ← was set_new_proxy()
+                report_bad_proxy()
             else:
                 log_error(target_url, f"Failed after {max_retries} retries: {str(e)}")
                 return []
@@ -429,14 +433,14 @@ def extract_movie_servers(target_url, max_retries=3):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  MAIN EXTRACTION: SERIES  (unchanged logic)
+#  MAIN EXTRACTION: SERIES
 # ══════════════════════════════════════════════════════════════════
 
 def extract_series_all_episodes(target_url, max_retries=3):
     for attempt in range(max_retries):
         try:
             time.sleep(random.uniform(2.5, 5.0))
-            html  = S.get(target_url, timeout=15).text
+            html  = S.get(target_url, timeout=15, verify=False).text
             token = csrf(html)
             root  = base(target_url)
             break
@@ -444,7 +448,7 @@ def extract_series_all_episodes(target_url, max_retries=3):
         except requests.exceptions.RequestException as e:
             print(f"  [!] Page load attempt {attempt + 1}/{max_retries} failed: {e}")
             if attempt < max_retries - 1:
-                report_bad_proxy()          # ← was set_new_proxy()
+                report_bad_proxy()
             else:
                 log_error(target_url, f"Series page load failed after {max_retries} retries: {str(e)}")
                 return None
@@ -488,7 +492,7 @@ def extract_series_all_episodes(target_url, max_retries=3):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  APPLY SERIES RESULT  (unchanged)
+#  APPLY SERIES RESULT
 # ══════════════════════════════════════════════════════════════════
 
 def apply_series_result(item, series_data):
@@ -505,10 +509,31 @@ def series_already_done(item):
 
 
 # ══════════════════════════════════════════════════════════════════
+#  DETECT TARGET HOST FROM JSON
+# ══════════════════════════════════════════════════════════════════
+
+def detect_target_host(json_path):
+    """Read first url in the JSON to auto-build the HTTPS test URL."""
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for item in data:
+            url = item.get("url", "")
+            if url.startswith("https://"):
+                p = urlparse(url)
+                return f"{p.scheme}://{p.netloc}/"
+    except Exception:
+        pass
+    return HTTPS_TEST_URL
+
+
+# ══════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════
 
 def main():
+    global pool
+
     limit_label = "full (no limit)" if URL_LIMIT is None else str(URL_LIMIT)
     print(f"[*] Starting job for file : {TARGET_JSON}")
     print(f"[*] Mode                  : {'SERIES' if IS_SERIES else 'MOVIES'}")
@@ -518,14 +543,23 @@ def main():
         print(f"[!] Error: {TARGET_JSON} not found in repository.")
         sys.exit(1)
 
+    # Auto-detect the target HTTPS host from the JSON data
+    test_url = detect_target_host(TARGET_JSON)
+    print(f"[*] Proxy test URL        : {test_url}")
+
+    # Scrape + validate proxies against the REAL target host
+    print("\n[*] Scraping free proxies...")
+    raw_proxies = scrape_free_proxies()
+    pool = ProxyPool(raw_proxies, test_url=test_url)
+    set_new_proxy()
+
     processed_urls = init_files()
 
     with open(TARGET_JSON, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    print(f"[*] Total records in {TARGET_JSON}: {len(data)}")
+    print(f"\n[*] Total records in {TARGET_JSON}: {len(data)}")
 
-    # ── Build queue ───────────────────────────────────────────────
     if IS_SERIES:
         queue = [
             item for item in data
@@ -548,7 +582,6 @@ def main():
 
     try:
         for item in queue:
-            # ── Auto-refill proxy pool if running low ─────────────
             if pool.size() < 5:
                 pool.refill()
 
@@ -557,7 +590,6 @@ def main():
             print(f"   URL: {target_url}")
 
             try:
-                # ── SERIES PATH ───────────────────────────────────
                 if IS_SERIES:
                     series_data = extract_series_all_episodes(target_url)
 
@@ -578,7 +610,6 @@ def main():
 
                     print(f"   Done — {series_data['total_episodes']} episodes written.")
 
-                # ── MOVIES PATH ───────────────────────────────────
                 else:
                     embeds = extract_movie_servers(target_url)
 
@@ -621,13 +652,5 @@ def main():
         print(f"\n[*] Saved updates to {TARGET_JSON}.")
 
 
-# ══════════════════════════════════════════════════════════════════
-#  BOOTSTRAP — scrape + validate proxies, then kick off first proxy
-# ══════════════════════════════════════════════════════════════════
-
 if __name__ == "__main__":
-    print("[*] Scraping free proxies...")
-    raw_proxies = scrape_free_proxies()
-    pool = ProxyPool(raw_proxies)
-    set_new_proxy()
     main()
