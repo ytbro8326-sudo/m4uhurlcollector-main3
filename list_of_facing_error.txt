@@ -91,3 +91,19 @@ https://ww1.m4uhd.page/watch-movie-billion-dollar-boner-1960-300545.html | ERROR
 https://ww1.m4uhd.page/watch-movie-billion-dollar-boner-1960-300545.html | ERROR: No embeds found or extraction failed.
 https://ww1.m4uhd.page/watch-movie-flea-for-two-1955-300543.html | ERROR: Failed after 3 retries: HTTPSConnectionPool(host='ww1.m4uhd.page', port=443): Max retries exceeded with url: /watch-movie-flea-for-two-1955-300543.html (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 502 Bad Gateway')))
 https://ww1.m4uhd.page/watch-movie-flea-for-two-1955-300543.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-the-wonders-of-aladdin-1961-251834.html | ERROR: Failed after 3 retries: HTTPSConnectionPool(host='ww1.m4uhd.page', port=443): Max retries exceeded with url: /watch-movie-the-wonders-of-aladdin-1961-251834.html (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 505 HTTP Version Not Supported')))
+https://ww1.m4uhd.page/watch-movie-the-wonders-of-aladdin-1961-251834.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-the-stress-of-youth-1962-251833.html | ERROR: Failed after 3 retries: HTTPSConnectionPool(host='ww1.m4uhd.page', port=443): Max retries exceeded with url: /watch-movie-the-stress-of-youth-1962-251833.html (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 400 Bad Request')))
+https://ww1.m4uhd.page/watch-movie-the-stress-of-youth-1962-251833.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-strictly-sinatra-2001-251832.html | ERROR: Failed after 3 retries: HTTPSConnectionPool(host='ww1.m4uhd.page', port=443): Max retries exceeded with url: /watch-movie-strictly-sinatra-2001-251832.html (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 400 Bad Request')))
+https://ww1.m4uhd.page/watch-movie-strictly-sinatra-2001-251832.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-shred-the-story-of-asher-bradshaw-2013-251831.html | ERROR: Failed after 3 retries: HTTPSConnectionPool(host='ww1.m4uhd.page', port=443): Max retries exceeded with url: /watch-movie-shred-the-story-of-asher-bradshaw-2013-251831.html (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 502 Bad Gateway')))
+https://ww1.m4uhd.page/watch-movie-shred-the-story-of-asher-bradshaw-2013-251831.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-og-the-harry-jumonji-story-2017-251830.html | ERROR: Failed after 3 retries: HTTPSConnectionPool(host='ww1.m4uhd.page', port=443): Max retries exceeded with url: /watch-movie-og-the-harry-jumonji-story-2017-251830.html (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 500 Internal Server Error')))
+https://ww1.m4uhd.page/watch-movie-og-the-harry-jumonji-story-2017-251830.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-hero-2018-251829.html | ERROR: Failed after 3 retries: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+https://ww1.m4uhd.page/watch-movie-hero-2018-251829.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-forgiven-2015-251828.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-fly-like-a-girl-2019-251827.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-expedition-happiness-2017-251826.html | ERROR: No embeds found or extraction failed.
+https://ww1.m4uhd.page/watch-movie-blood-and-steel-cedar-crest-country-club-2017-251825.html | ERROR: No embeds found or extraction failed.
