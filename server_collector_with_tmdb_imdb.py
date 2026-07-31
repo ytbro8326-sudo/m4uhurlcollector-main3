@@ -11,24 +11,19 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from collections import deque
 
-# Suppress SSL warnings from unverified free proxies
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ── API Configurations ───────────────────────────────────────────
 TMDB_API_KEY = "6fad3f86b8452ee232deb7977d7dcf58"
 
-# File paths
 TARGET_JSON    = os.getenv("TARGET_JSON", "movies.json")
 PROCESSED_FILE = "list_of_already_processed_urls.txt"
 ERROR_FILE     = "list_of_facing_error.txt"
 
-# Detect if we are processing a series file
 IS_SERIES = "series" in TARGET_JSON.lower()
 
-# Fallback test URL (overridden at runtime from actual JSON data)
 HTTPS_TEST_URL = "https://ww1.m4uhd.page/"
 
-# ── URL Limit ────────────────────────────────────────────────────
 def parse_url_limit():
     raw = os.getenv("URL_LIMIT", "100").strip().lower()
     if raw == "full":
@@ -47,11 +42,10 @@ URL_LIMIT = parse_url_limit()
 #  FREE PROXY SCRAPER
 # ══════════════════════════════════════════════════════════════════
 
-def scrape_free_proxies() -> list:
+def scrape_free_proxies():
     proxies = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # ── Source 1: free-proxy-list.net ────────────────────────────
     try:
         r = requests.get("https://free-proxy-list.net/", headers=headers, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
@@ -69,7 +63,6 @@ def scrape_free_proxies() -> list:
     except Exception as e:
         print(f"  [-] free-proxy-list.net failed : {e}")
 
-    # ── Source 2: sslproxies.org ─────────────────────────────────
     count_before = len(proxies)
     try:
         r = requests.get("https://www.sslproxies.org/", headers=headers, timeout=10)
@@ -86,7 +79,6 @@ def scrape_free_proxies() -> list:
     except Exception as e:
         print(f"  [-] sslproxies.org failed : {e}")
 
-    # ── Source 3: proxyscrape API ─────────────────────────────────
     count_before = len(proxies)
     try:
         url = (
@@ -102,7 +94,6 @@ def scrape_free_proxies() -> list:
     except Exception as e:
         print(f"  [-] proxyscrape API failed : {e}")
 
-    # ── Source 4: geonode API ─────────────────────────────────────
     count_before = len(proxies)
     try:
         url = (
@@ -121,7 +112,6 @@ def scrape_free_proxies() -> list:
     except Exception as e:
         print(f"  [-] geonode API failed : {e}")
 
-    # ── Deduplicate ───────────────────────────────────────────────
     proxies = list(dict.fromkeys(proxies))
     print(f"\n  [*] Total unique proxies scraped: {len(proxies)}")
     return proxies
@@ -129,9 +119,6 @@ def scrape_free_proxies() -> list:
 
 # ══════════════════════════════════════════════════════════════════
 #  PROXY POOL
-#  KEY FIX: validated against the REAL target HTTPS host, not
-#  httpbin.org. Only proxies that can actually open a CONNECT
-#  tunnel to ww1.m4uhd.page pass and enter the pool.
 # ══════════════════════════════════════════════════════════════════
 
 class ProxyPool:
@@ -158,11 +145,6 @@ class ProxyPool:
             raise RuntimeError("[!] No live proxies found that support HTTPS tunneling to the target.")
 
     def _check(self, proxy_url):
-        """
-        Validates the proxy by making a real GET through it to the actual
-        target host. Catches all tunnel errors: 400, 403, 500, 502, 505,
-        SSL cert failures, and timeouts. Any HTTP response from the site passes.
-        """
         try:
             r = requests.get(
                 self._test_url,
@@ -171,12 +153,14 @@ class ProxyPool:
                 verify=False,
                 allow_redirects=True,
             )
-            if r.status_code < 600:
+            # Only accept proxies where the site returns 200
+            # 403 means site blocked the proxy IP — useless for scraping
+            if r.status_code == 200:
                 with self._lock:
                     self._live.append(proxy_url)
-                print(f"  [+] Live [{r.status_code}] : {proxy_url}")
+                print(f"  [+] Live [200] : {proxy_url}")
         except Exception:
-            pass  # any error = tunnel failed, silently drop
+            pass
 
     def next(self):
         with self._lock:
@@ -218,7 +202,7 @@ class ProxyPool:
                     verify=False,
                     allow_redirects=True,
                 )
-                if r.status_code < 600:
+                if r.status_code == 200:
                     with lock:
                         found.append(proxy_url)
             except Exception:
@@ -318,7 +302,7 @@ def get_tmdb_id_from_imdb(imdb_id):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  HTML HELPERS
+#  HTML HELPERS — with debug prints to expose silent failures
 # ══════════════════════════════════════════════════════════════════
 
 def base(url):
@@ -327,19 +311,36 @@ def base(url):
 
 def csrf(html):
     m = re.search(r'<meta name="csrf-token" content="([^"]+)"', html)
-    return m.group(1) if m else ""
+    token = m.group(1) if m else ""
+    if not token:
+        print("  [DEBUG] WARNING: csrf-token NOT found in page HTML")
+    else:
+        print(f"  [DEBUG] csrf-token found: {token[:20]}...")
+    return token
 
 def spans(html):
     soup = BeautifulSoup(html, "html.parser")
-    return [
+    all_spans_with_data = soup.find_all("span", attrs={"data": True})
+    valid = [
         (s.get_text(strip=True), s["data"])
-        for s in soup.find_all("span", attrs={"data": True})
+        for s in all_spans_with_data
         if len(s.get("data", "")) > 10
     ]
+    print(f"  [DEBUG] spans() — total <span data=...> found: {len(all_spans_with_data)}, valid (len>10): {len(valid)}")
+    if not valid:
+        # Show a snippet of the raw HTML to see what the page actually looks like
+        snippet = html[:2000].replace("\n", " ")
+        print(f"  [DEBUG] Page HTML snippet (first 2000 chars):\n{snippet}\n")
+    return valid
 
 def iframe(html):
     m = re.search(r'<iframe[^>]+src="([^"]+)"', html)
-    return m.group(1) if m else ""
+    url = m.group(1) if m else ""
+    if not url:
+        print(f"  [DEBUG] iframe() — no <iframe src=...> found. Response snippet: {html[:500]}")
+    else:
+        print(f"  [DEBUG] iframe() — found embed URL: {url[:80]}")
+    return url
 
 def post(url, data, ref):
     r = S.post(
@@ -408,16 +409,30 @@ def extract_movie_servers(target_url, max_retries=3):
     for attempt in range(max_retries):
         try:
             time.sleep(random.uniform(2.5, 5.0))
-            html    = S.get(target_url, timeout=15, verify=False).text
+            print(f"  [DEBUG] Fetching page: {target_url}")
+            r = S.get(target_url, timeout=15, verify=False)
+            print(f"  [DEBUG] Page status code: {r.status_code}")
+            html    = r.text
             token   = csrf(html)
             root    = base(target_url)
             servers = spans(html)
-            embeds  = []
+
+            if not servers:
+                print(f"  [DEBUG] No servers found in page — skipping AJAX calls")
+                log_error(target_url, "spans() returned empty — page structure may have changed")
+                return []
+
+            embeds = []
             for label, data in servers:
-                embed_html = post(f"{root}/ajax", {"m4u": data, "_token": token}, target_url)
-                url = iframe(embed_html)
-                if url:
-                    embeds.append(url)
+                print(f"  [DEBUG] POSTing to /ajax for server label='{label}' data='{data[:30]}...'")
+                try:
+                    embed_html = post(f"{root}/ajax", {"m4u": data, "_token": token}, target_url)
+                    url = iframe(embed_html)
+                    if url:
+                        embeds.append(url)
+                except Exception as e:
+                    print(f"  [DEBUG] /ajax POST failed for label='{label}': {e}")
+
             return embeds
 
         except requests.exceptions.RequestException as e:
@@ -428,6 +443,7 @@ def extract_movie_servers(target_url, max_retries=3):
                 log_error(target_url, f"Failed after {max_retries} retries: {str(e)}")
                 return []
         except Exception as e:
+            print(f"  [!] Unexpected error: {e}")
             log_error(target_url, f"Unexpected error: {str(e)}")
             return []
 
@@ -440,7 +456,10 @@ def extract_series_all_episodes(target_url, max_retries=3):
     for attempt in range(max_retries):
         try:
             time.sleep(random.uniform(2.5, 5.0))
-            html  = S.get(target_url, timeout=15, verify=False).text
+            print(f"  [DEBUG] Fetching series page: {target_url}")
+            r = S.get(target_url, timeout=15, verify=False)
+            print(f"  [DEBUG] Page status code: {r.status_code}")
+            html  = r.text
             token = csrf(html)
             root  = base(target_url)
             break
@@ -457,6 +476,7 @@ def extract_series_all_episodes(target_url, max_retries=3):
             return None
 
     ep_ids = get_all_episode_ids(html)
+    print(f"  [DEBUG] Episode IDs found: {ep_ids[:5]}{'...' if len(ep_ids) > 5 else ''}")
     if not ep_ids:
         log_error(target_url, "No episode IDs found on series page.")
         return None
@@ -513,7 +533,6 @@ def series_already_done(item):
 # ══════════════════════════════════════════════════════════════════
 
 def detect_target_host(json_path):
-    """Read first url in the JSON to auto-build the HTTPS test URL."""
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -543,11 +562,9 @@ def main():
         print(f"[!] Error: {TARGET_JSON} not found in repository.")
         sys.exit(1)
 
-    # Auto-detect the target HTTPS host from the JSON data
     test_url = detect_target_host(TARGET_JSON)
     print(f"[*] Proxy test URL        : {test_url}")
 
-    # Scrape + validate proxies against the REAL target host
     print("\n[*] Scraping free proxies...")
     raw_proxies = scrape_free_proxies()
     pool = ProxyPool(raw_proxies, test_url=test_url)
